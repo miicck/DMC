@@ -3,6 +3,7 @@ module constants
 implicit none
     integer,    parameter :: prec = SELECTED_REAL_KIND(15,307)
     real(prec), parameter :: pi   = 3.141592625359
+    real(prec), parameter :: hartree_to_ev = 27.21138602
 end module constants
 
 ! Utilities
@@ -77,9 +78,17 @@ implicit none
         procedure :: moveElectron    => walkerMoveElectron
         procedure :: copyTo          => walkerCopyTo
         procedure :: initialize      => walkerInitialize
+        procedure :: avElecRadius    => walkerAvElecRadius
     end type
 
 contains
+
+    ! The coulomb interaction used to calculate energies
+    function coulomb(q1,q2,r)
+    implicit none
+        real(prec) :: q1, q2, r, coulomb
+        coulomb = q1*q2/r
+    end function
 
     ! Copy the walker this onto other
     subroutine walkerCopyTo(this, other)
@@ -102,6 +111,19 @@ contains
         
     end subroutine
 
+    ! Calculate the average electron radius of this walker
+    function walkerAvElecRadius(this) result(res)
+    implicit none
+        class(walker)  :: this
+        real(prec)     :: res
+        integer        :: i
+        res = 0
+        do i=1,size(this%electronPositions, 2)
+            res = res + norm2(this%electronPositions(:,i))
+        enddo 
+        res = res / size(this%electronPositions, 2)
+    end function
+
     ! Return the potential energy of this walker
     function walkerPotentialEnergy(this, nuclei) result(res)
     implicit none
@@ -117,7 +139,7 @@ contains
             do j=1,size(nuclei)
                 disp = this%electronPositions(:,i)
                 disp = disp - nuclei(j)%position
-                res = res - nuclei(j)%charge/norm2(disp)
+                res = res + coulomb(-1d0,nuclei(j)%charge,norm2(disp))
             enddo
         enddo
 
@@ -126,7 +148,7 @@ contains
             do j=i+1,size(this%electronPositions,2)
                 disp = this%electronPositions(:,i) - &
                        this%electronPositions(:,j)
-                res = res + 1/norm2(disp)
+                res = res + coulomb(1d0,1d0,norm2(disp))
             enddo
         enddo
 
@@ -219,6 +241,7 @@ implicit none
         real(prec) :: averageEnergy
         real(prec) :: averageKinetic
         real(prec) :: averagePotential
+        real(prec) :: avElecRadius
         integer    :: population
     end type
 
@@ -317,7 +340,7 @@ contains
                 print *, "Equilibriation itteration: ", currentItteration
             endif
             print *, "    Population: ", size(walkers)
-            print *, "    Best estimate of energy: ", bestVals%energy
+            print *, "    Best estimate of energy: ", bestVals%energy, "(", bestVals%energy * hartree_to_ev, " ev )"
             print *, "                    kinetic: ", bestVals%kinetic
             print *, "                  potential: ", bestVals%potential
             print *, ""
@@ -325,11 +348,14 @@ contains
 
     end subroutine
 
-    ! An equilibriation ittration has completed
+    ! An equilibriation itteration has completed
     subroutine onCompleteEquilItter()
     implicit none
         integer    :: i 
         real(prec) :: avPot, avKin, ratio
+
+        ! Calculate the average kinetic and potential energies of the
+        ! walkers after this itteration
         avPot = 0
         avKin = 0
         do i=1,size(walkers)
@@ -339,6 +365,8 @@ contains
         avPot = avPot/real(size(walkers),prec)
         avKin = avKin/real(size(walkers),prec)
 
+        ! Calculate the best eneries as rolling averages over around
+        ! equil_av_window itterations       
         ratio = 1/real(equil_av_window,prec)
         bestVals%energy = (avKin + avPot) * ratio + bestVals%energy * (1-ratio)
         bestVals%potential = avPot * ratio + bestVals%potential * (1-ratio)
@@ -351,13 +379,18 @@ contains
         integer :: i, itter
 
         ! Fill the step structure for this itteration
+        steps(itter)%averagePotential      = 0
+        steps(itter)%averageKinetic        = 0
+        steps(itter)%avElecRadius          = 0
         do i=1,size(walkers)
             steps(itter)%averagePotential = steps(itter)%averagePotential + walkers(i)%potentialEnergy(nuclei)
             steps(itter)%averageKinetic   = steps(itter)%averageKinetic   + walkers(i)%kineticEnergy(nuclei)
+            steps(itter)%avElecRadius     = steps(itter)%avElecRadius     + walkers(i)%avElecRadius()
         enddo
 
         steps(itter)%averageKinetic   = steps(itter)%averageKinetic   / size(walkers)
         steps(itter)%averagePotential = steps(itter)%averagePotential / size(walkers)
+        steps(itter)%avElecRadius     = steps(itter)%avElecRadius     / size(walkers) 
         steps(itter)%averageEnergy    = steps(itter)%averageKinetic + steps(itter)%averagePotential
         steps(itter)%population       = size(walkers)
 
@@ -454,7 +487,7 @@ contains
         open(unit=1,file="stats")
 
         do i=1,steps_stats
-            write(1,*) steps(i)%averageEnergy
+            write(1,*) steps(i)%averageEnergy, steps(i)%population, steps(i)%avElecRadius
         enddo
 
         close(unit=1)
