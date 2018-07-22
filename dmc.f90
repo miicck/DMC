@@ -342,7 +342,7 @@ contains
         ratio = 1/real(equil_av_window,prec)
         bestVals%energy = (avKin + avPot) * ratio + bestVals%energy * (1-ratio)
         bestVals%potential = avPot * ratio + bestVals%potential * (1-ratio)
-        bestVals%kinetic = avPot * ratio + bestVals%kinetic * (1-ratio)
+        bestVals%kinetic = avKin * ratio + bestVals%kinetic * (1-ratio)
     end subroutine
 
     ! A statistics itteration has completed
@@ -582,5 +582,9 @@ end module dmc
 program main
 use dmc
 implicit none
+    real :: timeStart, timeEnd
+    call cpu_time(timeStart)
     call runDMC
+    call cpu_time(timeEnd)
+    print *,"Total calaulation time: ", timeEnd-timeStart, "s"
 end program main
